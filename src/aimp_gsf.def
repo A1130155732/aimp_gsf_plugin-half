@@ -1,0 +1,5 @@
+; aimp_gsf.def - DLL 导出定义文件
+LIBRARY aimp_gsf
+
+EXPORTS
+    AIMPPluginGetHeader
