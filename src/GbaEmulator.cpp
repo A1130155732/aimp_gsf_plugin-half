@@ -19,7 +19,16 @@ GbaEmulator::GbaEmulator()
     , m_cycleAccum(0)
     , m_lastVcount(0xFF)
     , m_frameCount(0)
+    , m_lastPC(0)
+    , m_nopSeaCount(0)
+    , m_nopSeaRescueTotal(0)
+    , m_nopSeaFatal(false)
+    , m_runawayFatal(false)
+    , m_bxBadJumpLogged(false)
+    , m_traceIdx(0)
 {
+    memset(m_loggedSwi, 0, sizeof(m_loggedSwi));
+    memset(m_trace, 0, sizeof(m_trace));
     memset(m_ewram, 0, sizeof(m_ewram));
     memset(m_iwram, 0, sizeof(m_iwram));
     memset(m_ioram, 0, sizeof(m_ioram));
@@ -97,6 +106,17 @@ void GbaEmulator::Reset()
     m_halted = false;
     m_cycleAccum = 0;
     m_lastVcount = 0xFF;
+    // 每次 Reset（新曲目 Open，或向后 seek）都清空看门狗/诊断状态，
+    // 避免上一首曲目留下的"放弃自救"/"RUNAWAY"标记传染给这一首。
+    m_lastPC = 0;
+    m_nopSeaCount = 0;
+    m_nopSeaRescueTotal = 0;
+    m_nopSeaFatal = false;
+    m_runawayFatal = false;
+    m_bxBadJumpLogged = false;
+    memset(m_loggedSwi, 0, sizeof(m_loggedSwi));
+    m_traceIdx = 0;
+    memset(m_trace, 0, sizeof(m_trace));
     memset(&m_regs, 0, sizeof(m_regs));
     m_regs.cpsr = 0x1F;         // System 模式
     m_regs.SP() = 0x03007F00;   // System 模式 SP（IWRAM 栈顶）
@@ -1137,14 +1157,13 @@ int GbaEmulator::ExecuteThumb()
     {
         uint32_t rs = (instr >> 3) & 0xF;
         uint32_t addr = (rs == 15u) ? (pc + 4u) : m_regs.r[rs];
-        static bool s_bxLogged = false;
-		if (!s_bxLogged)
+		if (!m_bxBadJumpLogged)
 		{
 			uint32_t region = (addr & ~1u) >> 24;
 			bool valid = (region==0x00||region==0x02||region==0x03||region==0x04||(region>=0x08&&region<=0x0D));
 			if (!valid)
 			{
-				s_bxLogged = true;
+				m_bxBadJumpLogged = true;
 				LogDebug(L"[CPU:BADJUMP] BX/BLX R%d=0x%08X at pc=0x%08X(LR调用点=0x%08X) "
                      L"prevInstr[-8..-2]=%04X %04X %04X SP=0x%08X",
                      rs, addr, pc, m_regs.LR(),
@@ -1328,8 +1347,11 @@ int GbaEmulator::RunForSamples(int16_t* buffer, int maxSamples)
     int samplesGenerated = 0;
     const int maxCyclesPerCall = GBA_CYCLES_PER_FRAME * 4;
     int cyclesThisCall = 0;
-    static uint32_t s_lastPC    = 0;
-    static int  s_nopSeaCount   = 0;
+    // 注意：NOP-SEA / RUNAWAY / BADJUMP 相关的看门狗状态都已经改成
+    // GbaEmulator 的成员变量（m_lastPC / m_nopSeaCount / m_nopSeaFatal /
+    // m_runawayFatal 等），在 Reset() 里清零，不再用函数内 static——
+    // 后者会被同一进程里所有曲目共用，一首曲子触发了"放弃自救"或
+    // "RUNAWAY"，会永久传染给之后播放的所有曲目（包括完全正常的 ROM）。
     // GSF entry_point 已直接编码启动桩，CPU 从 entry_point 执行即可，无需注入
     while (samplesGenerated < maxSamples && cyclesThisCall < maxCyclesPerCall)
     {
@@ -1341,10 +1363,13 @@ int GbaEmulator::RunForSamples(int16_t* buffer, int maxSamples)
                 uint32_t region = currentInstrPC >> 24;
                 bool validRegion = (region == 0x00 || region == 0x02 || region == 0x03 ||
                                     region == 0x04 || (region >= 0x08 && region <= 0x0D));
-                static bool s_fatalHalted = false;
+                // NOP-SEA 自救彻底放弃后，用和 RUNAWAY 一样的方式提前返回，
+                // 避免下面 "VBlank 强制唤醒 CPU" 的逻辑把这个停机状态又撤销掉，
+                // 导致 CPU 反复原地踏步、日志被刷屏。
+                if (m_nopSeaFatal) { m_halted = true; return 1; }
 				if (!validRegion)
                 {
-                    if (s_fatalHalted) { m_halted = true; return 1; }
+                    if (m_runawayFatal) { m_halted = true; return 1; }
 					LogDebug(L"[CPU:RUNAWAY] PC=0x%08X REGION=0x%02X T=%d "
                              L"R0=%08X R1=%08X R2=%08X R3=%08X "
                              L"R4=%08X R5=%08X R6=%08X R7=%08X "
@@ -1358,11 +1383,12 @@ int GbaEmulator::RunForSamples(int16_t* buffer, int maxSamples)
                              (int)m_irq.ime, (int)m_irq.ie, (int)m_irq.ifl,
                              (int)m_timers[0].enabled, m_timers[0].reload,
                              (int)m_timers[1].enabled, m_timers[1].reload);
-                    s_fatalHalted = true;
+                    m_runawayFatal = true;
                     m_halted = true;
+                    DumpTrace(L"RUNAWAY");
 					//m_regs.SetT(false);
                     //m_regs.PC() = 0x00000008u + 8u; // BIOS SWI stub: MOV PC, LR
-                    //s_nopSeaCount = 0; // 重置 NOP 海计数器
+                    //m_nopSeaCount = 0; // 重置 NOP 海计数器
                 }
             }
             if (!m_halted && m_regs.T())
@@ -1370,40 +1396,80 @@ int GbaEmulator::RunForSamples(int16_t* buffer, int maxSamples)
                 uint16_t fetchedInstr = ReadHalf(currentInstrPC);
                 if (fetchedInstr == 0x0000u)
                 {
-                    s_nopSeaCount++;
-                    if (s_nopSeaCount == 8)
+                    m_nopSeaCount++;
+                    if (m_nopSeaCount == 8)
                     {
                         LogDebug(L"[CPU:NOP-SEA] 连续 %d 步 0x0000 at PC=0x%08X "
                                  L"R0=%08X R1=%08X R2=%08X R3=%08X "
                                  L"LR=%08X SP=%08X CPSR=%08X "
                                  L"IME=%d IE=0x%04X IF=0x%04X",
-                                 s_nopSeaCount, currentInstrPC,
+                                 m_nopSeaCount, currentInstrPC,
                                  m_regs.r[0], m_regs.r[1], m_regs.r[2], m_regs.r[3],
                                  m_regs.LR(), m_regs.SP(), m_regs.cpsr,
                                  (int)m_irq.ime, (int)m_irq.ie, (int)m_irq.ifl);
                     }
-                    if (s_nopSeaCount >= 8)
+                    if (m_nopSeaCount >= 8)
                     {
+                        // 注意：这是一个"最后手段"式的启发式补救，建立在一个不一定成立的假设上——
+                        // 即当前卡住的位置是通过 BL 调用进入的子函数，因此 LR 里是有效的返回地址。
+                        // 如果卡住的其实是顶层等待循环，或是从中断返回路径进入的，LR 并不指向
+                        // 有效的可执行代码，貌似"自救"的跳转反而会把 CPU 带到完全无关的地址，
+                        // 继而触发 BX/BLX 使用垃圾寄存器值（CPU:BADJUMP），最终彻底跑飞
+                        // （CPU:RUNAWAY）并被永久挂起——表现为播放到一半突然彻底静音。
+                        // 为避免这种"二次伤害"，这里加两道保险：
+                        //   1) 跳转前检查 LR 指向的内存区域是否是合理的代码区域，不合理就不跳，
+                        //      直接判定为不可恢复并停止，而不是硬跳到垃圾地址。
+                        //   2) 限制一次播放过程中"自救"的总次数，超过阈值说明反复卡死同一处
+                        //      并没有真正恢复，与其继续制造潜在的乱跳/噪音，不如直接停止。
+                        const int kMaxRescues = 4;
+
                         uint32_t lr = m_regs.LR();
-                        LogDebug(L"[CPU:NOP-SEA] 注入空函数返回 LR=0x%08X (T=%d)，"
-                                 L"跳出 NOP 海（已连续 %d 步）",
-                                 lr, (int)((lr & 1u) != 0u), s_nopSeaCount);
                         uint32_t retTarget = lr & ~1u;
-                        if (lr & 1u) { m_regs.SetT(true);  m_regs.PC() = retTarget + 4u; }
-                        else         { m_regs.SetT(false); m_regs.PC() = retTarget + 8u; }
-                        s_nopSeaCount = 0;
-                        currentInstrPC = m_regs.PC() - (m_regs.T() ? 4u : 8u);
+                        uint32_t retRegion = retTarget >> 24;
+                        bool     retValid  = (retRegion == 0x00 || retRegion == 0x02 || retRegion == 0x03 ||
+                                              retRegion == 0x04 || (retRegion >= 0x08 && retRegion <= 0x0D));
+
+                        m_nopSeaRescueTotal++;
+
+                        if (!retValid || m_nopSeaRescueTotal > kMaxRescues)
+                        {
+                            LogDebug(L"[CPU:NOP-SEA] 放弃自救：LR=0x%08X %s（已尝试自救 %d 次），"
+                                     L"判定为不可恢复的卡死，停止 CPU 以避免乱跳产生噪音/崩溃",
+                                     lr, retValid ? L"但自救次数已超过上限" : L"指向非法内存区域",
+                                     m_nopSeaRescueTotal);
+                            // 不再盲目跳转：直接停机。此后 CPU 保持挂起，不会再产生乱跳
+                            // 或错误数据，代价是这段之后归于静音——但这比继续跑飞、
+                            // 输出随机噪音要安全、也更容易定位问题（日志里会清楚写明原因）。
+                            m_halted = true;
+                            m_nopSeaFatal = true;
+                            m_nopSeaCount = 0;
+                            DumpTrace(L"NOP-SEA放弃自救");
+                        }
+                        else
+                        {
+                            LogDebug(L"[CPU:NOP-SEA] 注入空函数返回 LR=0x%08X (T=%d)，"
+                                     L"跳出 NOP 海（已连续 %d 步，本次播放第 %d 次自救）",
+                                     lr, (int)((lr & 1u) != 0u), m_nopSeaCount, m_nopSeaRescueTotal);
+                            if (lr & 1u) { m_regs.SetT(true);  m_regs.PC() = retTarget + 4u; }
+                            else         { m_regs.SetT(false); m_regs.PC() = retTarget + 8u; }
+                            m_nopSeaCount = 0;
+                            currentInstrPC = m_regs.PC() - (m_regs.T() ? 4u : 8u);
+                        }
                     }
                 }
                 else
                 {
-                    if (s_nopSeaCount > 0)
+                    if (m_nopSeaCount > 0)
                     {
-                        s_nopSeaCount = 0;
+                        m_nopSeaCount = 0;
                     }
                 }
             }
-            s_lastPC = currentInstrPC;
+            m_lastPC = currentInstrPC;
+            {
+                uint32_t rawInstr = m_regs.T() ? (uint32_t)ReadHalf(currentInstrPC) : ReadWord(currentInstrPC);
+                PushTrace(currentInstrPC, rawInstr, m_regs.T());
+            }
             if (m_regs.T())
                 step = ExecuteThumb();
             else
@@ -1490,10 +1556,157 @@ void GbaEmulator::CheckDmaTiming(int timing)
             RunDma(i);
     }
 }
+// SWI 0x11/0x12 LZ77UnComp
+// 源数据格式（GBATEK 标准 BIOS 压缩格式）：
+//   [0]     Reserved(4bit) | Type=1(4bit)
+//   [1..3]  解压后大小（24bit，小端）
+//   [4..]   压缩数据流：每个 flag 字节的 8 个 bit（MSB 优先）依次表示后面
+//           跟着的 8 个块是「原始字节」(0) 还是「引用块」(1)：
+//             原始字节：直接复制 1 字节
+//             引用块  ：2 字节，[0]高4位=长度-3，[0]低4位<<8|[1]=距离-1，
+//                       从已输出的数据中回溯 距离 字节，复制 长度 字节
+void GbaEmulator::Lz77UnComp(uint32_t src, uint32_t dst)
+{
+    uint32_t header = ReadWord(src);
+    uint8_t  type   = (uint8_t)((header >> 4) & 0xF);
+    uint32_t size   = header >> 8;
+    if (type != 1 || size == 0)
+    {
+        LogDebug(L"[LZ77UnComp] 头部异常 type=%d size=%u（应为 type=1），已跳过", type, size);
+        return;
+    }
+
+    uint32_t srcPos = src + 4;
+    uint32_t dstPos = dst;
+    uint32_t written = 0;
+    // 极端/损坏数据兜底：解压出的数据量不应超出声明大小的合理上限
+    const uint32_t kMaxOutput = size;
+
+    while (written < kMaxOutput)
+    {
+        uint8_t flags = ReadByte(srcPos++);
+        for (int bit = 7; bit >= 0 && written < kMaxOutput; bit--)
+        {
+            if (flags & (1 << bit))
+            {
+                uint8_t b0 = ReadByte(srcPos++);
+                uint8_t b1 = ReadByte(srcPos++);
+                uint32_t length = (uint32_t)(b0 >> 4) + 3;
+                uint32_t disp   = ((uint32_t)(b0 & 0xF) << 8 | b1) + 1;
+                if (disp > (dstPos - dst) + 1)
+                {
+                    // 引用越界（数据损坏或参数解析错误），停止以免写坏内存
+                    LogDebug(L"[LZ77UnComp] 引用距离越界 disp=%u 当前已输出=%u，中止解压",
+                             disp, written);
+                    return;
+                }
+                for (uint32_t i = 0; i < length && written < kMaxOutput; i++)
+                {
+                    uint8_t val = ReadByte(dstPos - disp);
+                    WriteByte(dstPos, val);
+                    dstPos++;
+                    written++;
+                }
+            }
+            else
+            {
+                uint8_t val = ReadByte(srcPos++);
+                WriteByte(dstPos, val);
+                dstPos++;
+                written++;
+            }
+        }
+    }
+}
+
+// SWI 0x14/0x15 RLUnComp
+// 源数据格式：
+//   [0]     Reserved(4bit) | Type=3(4bit)
+//   [1..3]  解压后大小（24bit，小端）
+//   [4..]   压缩数据流：每个块以 1 个 flag 字节开头：
+//             flag bit7=0：未压缩块，长度=(flag&0x7F)+1，后面跟对应字节数的原始数据
+//             flag bit7=1：压缩块  ，长度=(flag&0x7F)+3，后面跟 1 字节，重复该字节 长度 次
+void GbaEmulator::RlUnComp(uint32_t src, uint32_t dst)
+{
+    uint32_t header = ReadWord(src);
+    uint8_t  type   = (uint8_t)((header >> 4) & 0xF);
+    uint32_t size   = header >> 8;
+    if (type != 3 || size == 0)
+    {
+        LogDebug(L"[RLUnComp] 头部异常 type=%d size=%u（应为 type=3），已跳过", type, size);
+        return;
+    }
+
+    uint32_t srcPos = src + 4;
+    uint32_t dstPos = dst;
+    uint32_t written = 0;
+
+    while (written < size)
+    {
+        uint8_t flag = ReadByte(srcPos++);
+        if (flag & 0x80)
+        {
+            uint32_t length = (uint32_t)(flag & 0x7F) + 3;
+            uint8_t  val    = ReadByte(srcPos++);
+            for (uint32_t i = 0; i < length && written < size; i++)
+            {
+                WriteByte(dstPos++, val);
+                written++;
+            }
+        }
+        else
+        {
+            uint32_t length = (uint32_t)(flag & 0x7F) + 1;
+            for (uint32_t i = 0; i < length && written < size; i++)
+            {
+                WriteByte(dstPos++, ReadByte(srcPos++));
+                written++;
+            }
+        }
+    }
+}
+
+void GbaEmulator::PushTrace(uint32_t pc, uint32_t instr, bool thumb)
+{
+    m_trace[m_traceIdx].pc = pc;
+    m_trace[m_traceIdx].instr = instr;
+    m_trace[m_traceIdx].thumb = thumb;
+    m_traceIdx = (m_traceIdx + 1) % kTraceDepth;
+}
+void GbaEmulator::DumpTrace(const wchar_t* reason)
+{
+    LogDebug(L"[CPU:TRACE] 最近 %d 条指令（触发原因：%s，从旧到新）：", kTraceDepth, reason);
+    for (int i = 0; i < kTraceDepth; i++)
+    {
+        int idx = (m_traceIdx + i) % kTraceDepth;
+        const TraceEntry& t = m_trace[idx];
+        if (t.pc == 0 && t.instr == 0) continue; // 尚未填满的槽位跳过
+        LogDebug(L"  [%2d] PC=0x%08X %s instr=0x%0*X",
+                 i, t.pc, t.thumb ? L"THUMB" : L"ARM  ",
+                 t.thumb ? 4 : 8, t.instr);
+    }
+}
 bool GbaEmulator::HandleSWI(uint8_t id)
 {
     switch (id)
     {
+    case 0x02: // Halt
+        // 和 IntrWait/VBlankIntrWait 不同，Halt 不管理 0x03007FF8 那个
+        // BIOS 中断检查标志数组，也不筛选具体等哪个中断——它只是让 CPU
+        // 停下来，直到任意一个「已使能」的中断发生（HandleInterrupt 里
+        // 已经有 `if (m_halted && m_irq.ifl) m_halted = false;` 这个唤醒
+        // 逻辑，不需要额外处理）。
+        // 之前这个 SWI 完全没实现：遇到时会跳到一个「立刻返回」的假
+        // BIOS 存根，等于 Halt 从来没有真正停下来过——游戏原本期望
+        // 「暂停到下一次 Timer/DMA/VBlank 中断」的这段时间被跳过了，
+        // CPU 会比真机快得多地反复空转，导致跟音频 FIFO 填充相关的
+        // 定时器/DMA 节奏完全对不上：轻则杂音（Robot Taisen OG2 那种
+        // 长时间重复的静态采样值 + 偶发爆音），重则接下来走到不该走
+        // 到的分支、踩进全零内存（Summon Night 的 NOP-SEA）。
+        m_irq.ime = 1;  // 和 0x04/0x05 保持一致，确保后续中断能正常派发
+        m_halted = true;
+        LogDebug(L"[SWI] 0x02 Halt: IE=0x%04X IF=0x%04X", (int)m_irq.ie, (int)m_irq.ifl);
+        return true;
     case 0x04:
         m_irq.ime = 1;  // BIOS 必须在 HALT 前开启 IME
         if (m_regs.r[0] != 0) {
@@ -1581,10 +1794,44 @@ bool GbaEmulator::HandleSWI(uint8_t id)
         }
         return true;
     }
+    case 0x11: // LZ77UnCompWRAM
+    case 0x12: // LZ77UnCompVRAM
+    {
+        uint32_t src = m_regs.r[0];
+        uint32_t dst = m_regs.r[1];
+        uint32_t header = ReadWord(src);
+        uint32_t size = header >> 8;
+        LogDebug(L"[SWI] 0x%02X LZ77UnComp: src=0x%08X dst=0x%08X size=%u", (unsigned int)id, src, dst, size);
+        Lz77UnComp(src, dst);
+        return true;
+    }
+    case 0x14: // RLUnCompWRAM
+    case 0x15: // RLUnCompVRAM
+    {
+        uint32_t src = m_regs.r[0];
+        uint32_t dst = m_regs.r[1];
+        uint32_t header = ReadWord(src);
+        uint32_t size = header >> 8;
+        LogDebug(L"[SWI] 0x%02X RLUnComp: src=0x%08X dst=0x%08X size=%u", (unsigned int)id, src, dst, size);
+        RlUnComp(src, dst);
+        return true;
+    }
     case 0x00:
     case 0x01:
         return true;
     default:
+    {
+        // 记录每个未实现的 SWI 号（每个号只记录一次，避免刷屏），
+        // 便于定位到底是哪个 BIOS 调用导致游戏卡死/无声。
+        if (!m_loggedSwi[id])
+        {
+            m_loggedSwi[id] = true;
+            LogDebug(L"[SWI:UNIMPLEMENTED] id=0x%02X r0=%08X r1=%08X r2=%08X r3=%08X LR=%08X "
+                     L"-- 该 BIOS 调用未实现，代码将被跳转到空的 BIOS 存根，"
+                     L"如果这就是卡死/静音的原因，请优先补齐此调用",
+                     (unsigned int)id, m_regs.r[0], m_regs.r[1], m_regs.r[2], m_regs.r[3], m_regs.LR());
+        }
         return false;
+    }
     }
 }

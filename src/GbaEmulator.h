@@ -176,6 +176,31 @@ private:
     uint8_t m_lastVcount;       // 上一 VCOUNT 值，用于 VBlank 边沿检测（跨帧持久化）
     int     m_frameCount;       // 已完成帧数（调试用）
 
+    // 调试/看门狗状态 —— 必须是"每个对象一份"，而不是函数内 static。
+    // 之前这些是函数内 static 局部变量，等于整个进程共用一份：
+    // 只要有一首曲子触发了"放弃自救"/"RUNAWAY"，这个标记就会永久保持置位，
+    // 导致后面播放的所有曲目（哪怕 ROM 完全正常）一进 RunForSamples 就被
+    // 直接判死刑、立即返回，表现为"莫名其妙全程静音"。
+    // 现在改成成员变量，并在 Reset() 里清零，确保每次真正重新开始播放
+    // （每个对象/每次 Open/每次向后 seek 触发的 Reset）都是干净状态。
+    uint32_t m_lastPC;
+    int      m_nopSeaCount;
+    int      m_nopSeaRescueTotal;
+    bool     m_nopSeaFatal;
+    bool     m_runawayFatal;
+    bool     m_bxBadJumpLogged;
+    bool     m_loggedSwi[256];
+
+    // 最近执行过的指令历史（环形缓冲区），在 NOP-SEA/RUNAWAY 触发时打印出来，
+    // 方便在没有反汇编的情况下，看清楚 CPU 究竟是从哪条指令、哪个分支
+    // 走进了不该去的地方，而不是只能看到出事那一刻的寄存器快照。
+    static constexpr int kTraceDepth = 16;
+    struct TraceEntry { uint32_t pc; uint32_t instr; bool thumb; };
+    TraceEntry m_trace[kTraceDepth];
+    int        m_traceIdx;
+    void       PushTrace(uint32_t pc, uint32_t instr, bool thumb);
+    void       DumpTrace(const wchar_t* reason);
+
     // CPU 执行
     int  ExecuteArm();      // 执行一条 ARM 指令，返回周期数
     int  ExecuteThumb();    // 执行一条 Thumb 指令，返回周期数
@@ -192,6 +217,13 @@ private:
     // SWI 软件模拟（替代缺失的 BIOS）
     // 返回 true 表示已处理，false 表示需跳转 BIOS 向量
     bool HandleSWI(uint8_t id);
+
+    // BIOS 解压缩例程（SWI 0x11/0x12 LZ77UnComp, SWI 0x14/0x15 RLUnComp）
+    // 很多商业游戏的音源驱动/音乐数据以这些格式压缩存放在 ROM 中，
+    // 若不实现，游戏在启动时调用这些 SWI 会得不到预期的数据/代码，
+    // 导致 CPU 后续执行到未初始化（全零）的内存区域。
+    void Lz77UnComp(uint32_t src, uint32_t dst);
+    void RlUnComp(uint32_t src, uint32_t dst);
 
     // IO 寄存器处理
     uint8_t  ReadIO(uint32_t addr);
