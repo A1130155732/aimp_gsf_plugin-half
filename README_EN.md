@@ -5,8 +5,11 @@
 > **Disclaimer**: I am totally new to programming. This project was built by AI based on my requirements, with multiple AIs collaborating (due to limited free points).<br>
 > Descriptions may be incomplete or inaccurate. Sorry for the inconvenience.
 >
-> **Note**: Issues and Pull Requests are disabled as I cannot handle them. Thank you for your understanding.
->
+> **Note**: Issues and Pull Requests are disabled as I cannot handle them. Thank you for your understanding.<br>
+
+> **How to use**: 1.Place aimp_gsf.dll under AIMP\Plugins\aimp_gsf folder.
+2.Place zlib1.dll in the root directory of AIMP.
+
 > In the early development, I used music from *Super Robot Taisen OG2* for debugging and by somehow hit a usable memory address, which misled me into thinking my approach was correct. This led to many failed attempts to extend support to other games.  
 > After refactoring the logic, the plugin now **only plays `.minigsf` music from certain games** (sometimes with noise/crash the player). See my personal test list below.<br>
 > Trying to ask AI to fix， mainly depends on the luck...
@@ -140,7 +143,7 @@ aimp_gsf_plugin/
 
 ## Acknowledgements
 
-- [kode54](https://www.foobar2000.org/) – author of the foobar2000 `foo_gsf` plugin
+- [kode54](https://www.foobar2000.org/components/view/foo_input_gsf) – author of the foobar2000 `foo_gsf` plugin
 - [Artem Izmaylov](https://www.aimp.ru/) – AIMP player and SDK provider
 - Neill Corlett – GSF format specification (public domain documentation)
 - ChatGPT, Claude, DeepSeek, Manus, 秒哒, 语构 (in alphabetical order, no ranking implied)
