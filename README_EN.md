@@ -8,7 +8,8 @@
 > **Note**: Issues and Pull Requests are disabled as I cannot handle them. Thank you for your understanding.
 >
 > In the early development, I used music from *Super Robot Taisen OG2* for debugging and by somehow hit a usable memory address, which misled me into thinking my approach was correct. This led to many failed attempts to extend support to other games.  
-> After refactoring the logic, the plugin now **only plays `.minigsf` music from certain games** (sometimes with noise/crash the player). See my personal test list below.
+> After refactoring the logic, the plugin now **only plays `.minigsf` music from certain games** (sometimes with noise/crash the player). See my personal test list below.<br>
+> Trying to ask AI to fix， mainly depends on the luck...
 >
 > **Developers are welcome to fork and fix it! Thanks!**
 
@@ -37,6 +38,7 @@ A GBA music format (`.minigsf`) decoder plugin for the AIMP player, based on the
 ## Known Limitations / Issues
 
 - External `gsflib` library dependencies are not fully handled, which may affect compatibility.
+- The seek backward/forward would stuck the player for a while.
 - Currently only music from certain games is playable. My personal test results are as follows (**not a complete list** – I only selected a few of my favorite tracks, so it is possible that some tracks from the same game work while others do not):
   1. *Yggdra Union* – works
   2. *The Legend of Zelda: The Minish Cap* – works
@@ -47,7 +49,7 @@ A GBA music format (`.minigsf`) decoder plugin for the AIMP player, based on the
   7. *Gyakuten Saiban* – works
   8. *Summon Night: Swordcraft Story* – no sound
   9. *Summon Night: Swordcraft Story 3* – no sound
-  10. *Lunar Legend* – no sound
+  10. *Lunar Legend* – works 7.14 fixed
   11. *Oriental Blue: Ao no Tengai* – works
   12. *Breath of Fire* – works
   13. *Castlevania - Aria of Sorrow* – **crash the player**
@@ -105,6 +107,9 @@ aimp_gsf_plugin/
 ---
 
 ## Version History
+
+### v3 (2026-07-14)
+- fixed Lunar Legend play issue.
 
 ### v2 (2026-07-13)
 - fixed the OG2 play issue.
