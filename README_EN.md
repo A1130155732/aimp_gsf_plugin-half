@@ -3,16 +3,16 @@
 # AIMP GSF Plugin
 
 > **Disclaimer**: I am totally new to programming. This project was built by AI based on my requirements, with multiple AIs collaborating (due to limited free points).<br>
-> Descriptions may be incomplete or inaccurate. Sorry for the inconvenience.
+> Descriptions may be incomplete or inaccurate. Sorry for the inconvenience.<br>
 >
-> **Note**: Issues and Pull Requests are disabled as I cannot handle them. Thank you for your understanding.<br>
-
+> **Caution**: Issues and Pull Requests are disabled as I cannot handle them. Thank you for your understanding.<br>
+> 
 > **How to use**: 1.Place aimp_gsf.dll under AIMP\Plugins\aimp_gsf folder.
-2.Place zlib1.dll in the root directory of AIMP.
-
-> In the early development, I used music from *Super Robot Taisen OG2* for debugging and by somehow hit a usable memory address, which misled me into thinking my approach was correct. This led to many failed attempts to extend support to other games.  
+2.Place zlib1.dll in the root directory of AIMP.<br>
+> 
+> **Project description**: In the early development, I used music from *Super Robot Taisen OG2* for debugging and by somehow hit a usable memory address, which misled me into thinking my approach was correct. This led to many failed attempts to extend support to other games. <br> 
 > After refactoring the logic, the plugin now **only plays `.minigsf` music from certain games** (sometimes with noise/crash the player). See my personal test list below.<br>
-> Trying to ask AI to fix， mainly depends on the luck...
+> Trying to ask AI to fix， mainly depends on the luck...<br>
 >
 > **Developers are welcome to fork and fix it! Thanks!**
 
@@ -42,21 +42,44 @@ A GBA music format (`.minigsf`) decoder plugin for the AIMP player, based on the
 
 - External `gsflib` library dependencies are not fully handled, which may affect compatibility.
 - The seek backward/forward would stuck the player for a while.
-- Currently only music from certain games is playable. My personal test results are as follows (**not a complete list** – I only selected a few of my favorite tracks, so it is possible that some tracks from the same game work while others do not):
-  1. *Yggdra Union* – works
-  2. *The Legend of Zelda: The Minish Cap* – works
-  3. *Pokémon Sapphire* – works
-  4. *Black Matrix Zero* – works
-  5. *Riviera: The Promised Land* – works
-  6. *Super Robot Taisen OG2* – works 7.13 fixed
-  7. *Gyakuten Saiban* – works
-  8. *Summon Night: Swordcraft Story* – no sound
-  9. *Summon Night: Swordcraft Story 3* – no sound
-  10. *Lunar Legend* – works 7.14 fixed
-  11. *Oriental Blue: Ao no Tengai* – works
-  12. *Breath of Fire* – works
-  13. *Castlevania - Aria of Sorrow* – **crash the player**
-
+- Currently only music from certain games is playable. My personal test results are as follows (**not a complete list** – I only selected a few of my favorite tracks, so it is possible that some tracks from the same game work while others do not):<br>
+<details>
+  <summary>Supported game music</summary>
+  1. <i>Yggdra Union</i> – works<br>
+  2. <i>The Legend of Zelda: The Minish Cap</i>– works<br>
+  3. <i>Pokémon Sapphire</i>– works<br>
+  4. <i>Black Matrix Zero</i> – works<br>
+  5. <i>Riviera: The Promised Land</i>– works<br>
+  6. <i>Super Robot Taisen OG2</i> – works 7.13 fixed<br>
+  7. <i>Gyakuten Saiban</i> – works<br>
+  8. <i>Lunar Legend</i>– works 7.14 fixed<br>
+  9. <i>Oriental Blue: Ao no Tengai</i>– works<br>
+  10. <i>Breath of Fire</i>– works<br>
+  11. <i>Ninja Five-O</i>– works<br>
+  12. <i>Advance Wars</i>– works<br>
+  13. <i>Sonic Advance</i>– works<br>
+  14. <i>Mario and Luigi - Superstar Saga</i>– works<br>
+  15. <i>Final Fantasy V Advance</i>– works<br>
+  16. <i>Mega Man Zero 2</i>– works<br>
+  17. <i>Kirby and the Amazing Mirror</i>– works<br>
+  18. <i>Super Circuit</i>– works<br>
+  19. <i>Final Fantasy Tactics Advance</i>– works<br>
+  20. <i>Tales of Phantasia</i>– works<br>
+</details>
+<details>
+  <summary>Unsupported game music</summary>
+  1. <i>Summon Night: Swordcraft Story</i> – no sound<br>
+  2. <i>Summon Night: Swordcraft Story 3</i>– no sound<br> 
+  3. <i>Castlevania - Aria of Sorrow</i>– <b>crash the player</b><br>
+  4. <i>Mother  3</i>– no sound<br>
+  5. <i>Donkey Kong Country 2</i> – no sound<br>
+  6. <i>Donkey Kong Country 3</i> – no sound<br>
+  7. <i>Golden Sun</i> – noise only<br>
+  8. <i>Metroid Fusion</i> – no sound<br>
+  9. <i>Iridion II</i> – no sound<br>
+  10. <i>Mario vs Donkey Kong</i> – noise only<br>
+  11. <i>Kingdom Hearts Chain of Memories</i> – partically work<br>
+</details>
 ---
 
 ## Quick Start
